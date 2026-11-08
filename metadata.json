@@ -1,0 +1,6 @@
+{
+  "name": "NEXUS TRADING AI",
+  "description": "Professional trading dashboard with market overview, AI signals, scanner, and news.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
