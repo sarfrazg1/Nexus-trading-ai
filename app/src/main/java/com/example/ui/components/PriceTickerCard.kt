@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
@@ -31,6 +33,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -67,6 +70,7 @@ fun PriceTickerCard(
     onCardClick: () -> Unit,
     onConnectFeedClick: () -> Unit,
     onSetAlertClick: () -> Unit,
+    onToggleFavorite: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val borderColor = when (asset.dataStatus) {
@@ -90,7 +94,7 @@ fun PriceTickerCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Header Row: Asset icon/badge + Name + Status Pill
+            // Header Row: Asset icon/badge + Name + Favorite + Status Pill
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -156,8 +160,24 @@ fun PriceTickerCard(
                     }
                 }
 
-                // Data Status Badge (LIVE / DELAYED / STALE / UNAVAILABLE)
-                MarketStatusBadge(status = asset.dataStatus)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onToggleFavorite != null) {
+                        IconButton(
+                            onClick = onToggleFavorite,
+                            modifier = Modifier.size(32.dp).testTag("fav_btn_${asset.id.lowercase()}")
+                        ) {
+                            Icon(
+                                imageVector = if (asset.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                                contentDescription = "Toggle Favorite",
+                                tint = if (asset.isFavorite) NexusGold else TextMuted,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    // Data Status Badge (LIVE / DELAYED / STALE / UNAVAILABLE)
+                    MarketStatusBadge(status = asset.dataStatus)
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))

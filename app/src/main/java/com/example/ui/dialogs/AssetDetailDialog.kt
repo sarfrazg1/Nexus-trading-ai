@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
@@ -67,7 +69,8 @@ fun AssetDetailDialog(
     onDismiss: () -> Unit,
     onSetAlert: (symbol: String) -> Unit,
     onConfigureFeed: () -> Unit,
-    onOpenTechnicalAnalysis: (symbol: String) -> Unit = {}
+    onOpenTechnicalAnalysis: (symbol: String) -> Unit = {},
+    onToggleFavorite: (() -> Unit)? = null
 ) {
     var selectedTf by remember { mutableStateOf(Timeframe._24H) }
 
@@ -86,7 +89,7 @@ fun AssetDetailDialog(
                     .fillMaxWidth()
                     .padding(20.dp)
             ) {
-                // Header with Close button & Status Badge
+                // Header with Close button, Favorite button & Status Badge
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -110,6 +113,16 @@ fun AssetDetailDialog(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (onToggleFavorite != null) {
+                            IconButton(onClick = onToggleFavorite) {
+                                Icon(
+                                    imageVector = if (asset.isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = "Toggle Favorite",
+                                    tint = if (asset.isFavorite) NexusGold else TextMuted
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
                         MarketStatusBadge(status = asset.dataStatus)
                         Spacer(modifier = Modifier.width(6.dp))
                         IconButton(onClick = onDismiss) {

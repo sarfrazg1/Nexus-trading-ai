@@ -18,12 +18,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Button
@@ -31,6 +33,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -38,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import java.util.Locale
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,12 +87,14 @@ fun DashboardScreen(
     onViewAllSignals: () -> Unit,
     onNavigateTab: (NavigationTab) -> Unit,
     onCopySignalLevels: (Signal) -> Unit,
+    onToggleFavorite: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // Primary assets for dashboard sections
     val btcAsset = assets.firstOrNull { it.id == "BTC" } ?: assets.firstOrNull()
     val goldAsset = assets.firstOrNull { it.id == "XAU" }
     val silverAsset = assets.firstOrNull { it.id == "XAG" }
+    val favoriteAssets = assets.filter { it.isFavorite }
 
     // Energy assets: WTI, Brent, Natural Gas
     var selectedEnergyId by remember { mutableStateOf("WTI") }
@@ -109,6 +115,79 @@ fun DashboardScreen(
             MarketOverviewHeader(overview = overview, onConfigureFeeds = { onNavigateTab(NavigationTab.SETTINGS) })
         }
 
+        // Priority Watchlist Carousel (if any favorited)
+        if (favoriteAssets.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = "PRIORITY WATCHLIST",
+                    subtitle = "Quick Access Starred Assets",
+                    icon = Icons.Default.Star
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(favoriteAssets, key = { "fav_dash_${it.id}" }) { fav ->
+                        Card(
+                            modifier = Modifier
+                                .width(160.dp)
+                                .clickable { onAssetClick(fav) }
+                                .testTag("dashboard_fav_${fav.id.lowercase()}"),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = NavyCard),
+                            border = BorderStroke(1.dp, NavyBorder)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = fav.symbol,
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            color = TextPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp
+                                        )
+                                    )
+                                    IconButton(
+                                        onClick = { onToggleFavorite(fav.id) },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Star,
+                                            contentDescription = null,
+                                            tint = NexusGold,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = if (fav.currentPrice != null) String.format(Locale.US, "$%,.2f", fav.currentPrice) else "Awaiting Quote",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = NexusGold,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                )
+                                val changePct = fav.change24hPercent ?: 0.0
+                                Text(
+                                    text = "${if (changePct >= 0) "+" else ""}${String.format(Locale.US, "%.2f", changePct)}%",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = if (changePct >= 0) BullishGreen else com.example.ui.theme.BearishRed,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 1. Bitcoin Price Section
         item {
             SectionHeader(
@@ -122,7 +201,8 @@ fun DashboardScreen(
                     asset = asset,
                     onCardClick = { onAssetClick(asset) },
                     onConnectFeedClick = { onConnectFeedClick(asset) },
-                    onSetAlertClick = { onSetAlertClick(asset.symbol) }
+                    onSetAlertClick = { onSetAlertClick(asset.symbol) },
+                    onToggleFavorite = { onToggleFavorite(asset.id) }
                 )
             }
         }
@@ -140,7 +220,8 @@ fun DashboardScreen(
                     asset = asset,
                     onCardClick = { onAssetClick(asset) },
                     onConnectFeedClick = { onConnectFeedClick(asset) },
-                    onSetAlertClick = { onSetAlertClick(asset.symbol) }
+                    onSetAlertClick = { onSetAlertClick(asset.symbol) },
+                    onToggleFavorite = { onToggleFavorite(asset.id) }
                 )
             }
         }
@@ -158,7 +239,8 @@ fun DashboardScreen(
                     asset = asset,
                     onCardClick = { onAssetClick(asset) },
                     onConnectFeedClick = { onConnectFeedClick(asset) },
-                    onSetAlertClick = { onSetAlertClick(asset.symbol) }
+                    onSetAlertClick = { onSetAlertClick(asset.symbol) },
+                    onToggleFavorite = { onToggleFavorite(asset.id) }
                 )
             }
         }
@@ -214,7 +296,8 @@ fun DashboardScreen(
                     asset = asset,
                     onCardClick = { onAssetClick(asset) },
                     onConnectFeedClick = { onConnectFeedClick(asset) },
-                    onSetAlertClick = { onSetAlertClick(asset.symbol) }
+                    onSetAlertClick = { onSetAlertClick(asset.symbol) },
+                    onToggleFavorite = { onToggleFavorite(asset.id) }
                 )
             }
         }

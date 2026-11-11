@@ -65,14 +65,16 @@ fun MarketsScreen(
     onConnectFeedClick: (MarketAsset) -> Unit,
     onSetAlertClick: (symbol: String) -> Unit,
     onOpenTechnicalAnalysis: (symbol: String) -> Unit = {},
+    onToggleFavorite: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val statusFilters = listOf("ALL", "LIVE", "DELAYED", "STALE", "UNAVAILABLE")
+    val statusFilters = listOf("ALL", "WATCHLIST", "LIVE", "DELAYED", "STALE", "UNAVAILABLE")
 
     val filteredAssets = assets.filter { asset ->
         val matchesCategory = selectedCategory == AssetCategory.ALL || asset.category == selectedCategory
-        val matchesStatus = when (statusFilter) {
+        val matchesStatus = when (statusFilter.uppercase()) {
             "ALL" -> true
+            "WATCHLIST" -> asset.isFavorite
             "LIVE" -> asset.dataStatus == MarketDataStatus.LIVE
             "DELAYED" -> asset.dataStatus == MarketDataStatus.DELAYED
             "STALE" -> asset.dataStatus == MarketDataStatus.STALE
@@ -287,7 +289,8 @@ fun MarketsScreen(
                     asset = asset,
                     onCardClick = { onAssetClick(asset) },
                     onConnectFeedClick = { onConnectFeedClick(asset) },
-                    onSetAlertClick = { onSetAlertClick(asset.symbol) }
+                    onSetAlertClick = { onSetAlertClick(asset.symbol) },
+                    onToggleFavorite = { onToggleFavorite(asset.id) }
                 )
             }
         }

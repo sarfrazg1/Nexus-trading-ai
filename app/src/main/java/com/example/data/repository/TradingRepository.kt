@@ -16,6 +16,9 @@ import com.example.data.model.ScannerItem
 import com.example.data.model.Signal
 import com.example.data.model.SignalStatus
 import com.example.data.model.SignalType
+import com.example.data.signal.AiTradingSignal
+import com.example.data.signal.AiTradingSignalEngine
+import com.example.data.signal.SignalDecision
 import com.example.data.remote.BinanceTicker24hr
 import com.example.data.remote.BinanceWebSocketManager
 import com.example.data.remote.CoinGeckoApiService
@@ -25,6 +28,13 @@ import com.example.data.indicators.OverallAnalysisResult
 import com.example.data.indicators.TechnicalIndicatorsEngine
 import com.example.data.model.Candle
 import com.example.data.model.CandleTimeframe
+import com.example.data.smc.FvgStatus
+import com.example.data.smc.MarketTrendState
+import com.example.data.smc.OrderBlockStatus
+import com.example.data.smc.PriceZoneType
+import com.example.data.smc.SmcAnalysisResult
+import com.example.data.smc.SmcCalculationEngine
+import com.example.data.smc.TimeframeSmcSnapshot
 import com.example.data.remote.CandleApiService
 import com.example.data.remote.BinanceClient
 import com.example.data.remote.CoinPriceQuote
@@ -55,16 +65,25 @@ class TradingRepository(
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val cache = MarketDataCache()
 
-    private val _assets = MutableStateFlow<List<MarketAsset>>(initialAssets())
+    val watchlistRepository = com.example.data.watchlist.WatchlistRepository()
+    val financialNewsService = com.example.data.news.FinancialNewsService()
+    val notificationManager = com.example.util.NexusNotificationManager()
+
+    private val _assets = MutableStateFlow<List<MarketAsset>>(initialAssets().map {
+        it.copy(isFavorite = watchlistRepository.isFavorite(it.id))
+    })
     val assets: StateFlow<List<MarketAsset>> = _assets.asStateFlow()
 
     private val _signals = MutableStateFlow<List<Signal>>(initialSignals())
     val signals: StateFlow<List<Signal>> = _signals.asStateFlow()
 
+    private val _aiSignals = MutableStateFlow<List<AiTradingSignal>>(emptyList())
+    val aiSignals: StateFlow<List<AiTradingSignal>> = _aiSignals.asStateFlow()
+
     private val _alerts = MutableStateFlow<List<MarketAlert>>(initialAlerts())
     val alerts: StateFlow<List<MarketAlert>> = _alerts.asStateFlow()
 
-    private val _news = MutableStateFlow<List<MarketNews>>(initialNews())
+    private val _news = MutableStateFlow<List<MarketNews>>(financialNewsService.getVerifiedMacroNews())
     val news: StateFlow<List<MarketNews>> = _news.asStateFlow()
 
     private val _scannerItems = MutableStateFlow<List<ScannerItem>>(initialScannerItems())
@@ -81,6 +100,21 @@ class TradingRepository(
 
     val isWebSocketLive: StateFlow<Boolean> = webSocketManager.isConnected
 
+    // Performance & Data Saving Controls
+    private val _isDataSavingMode = MutableStateFlow(false)
+    val isDataSavingMode: StateFlow<Boolean> = _isDataSavingMode.asStateFlow()
+
+    private val _isLowPerformanceMode = MutableStateFlow(false)
+    val isLowPerformanceMode: StateFlow<Boolean> = _isLowPerformanceMode.asStateFlow()
+
+    private val _refreshIntervalSeconds = MutableStateFlow(15)
+    val refreshIntervalSeconds: StateFlow<Int> = _refreshIntervalSeconds.asStateFlow()
+
+    private val _lastMarketDataUpdateMillis = MutableStateFlow(System.currentTimeMillis())
+    val lastMarketDataUpdateMillis: StateFlow<Long> = _lastMarketDataUpdateMillis.asStateFlow()
+
+    private val candleCache = mutableMapOf<String, Pair<Long, List<Candle>>>()
+
     init {
         // Cache initial asset templates
         cache.putAll(_assets.value)
@@ -88,17 +122,50 @@ class TradingRepository(
         // Observe real-time Binance WebSocket ticker stream
         repositoryScope.launch {
             webSocketManager.tickerUpdates.collect { updates ->
-                handleWebSocketUpdates(updates)
+                if (!_isDataSavingMode.value) {
+                    handleWebSocketUpdates(updates)
+                }
             }
         }
 
-        // Start WebSocket streaming
-        webSocketManager.start()
+        // Start WebSocket streaming if not in data-saving mode
+        if (!_isDataSavingMode.value) {
+            webSocketManager.start()
+        }
 
         // Trigger initial data load
         repositoryScope.launch {
             refreshData()
         }
+    }
+
+    fun setDataSavingMode(enabled: Boolean) {
+        _isDataSavingMode.value = enabled
+        if (enabled) {
+            webSocketManager.stop()
+            if (_refreshIntervalSeconds.value == 15) {
+                _refreshIntervalSeconds.value = 60
+            }
+        } else {
+            webSocketManager.start()
+        }
+    }
+
+    fun setLowPerformanceMode(enabled: Boolean) {
+        _isLowPerformanceMode.value = enabled
+        if (enabled) {
+            candleCache.clear()
+        }
+    }
+
+    fun setRefreshIntervalSeconds(seconds: Int) {
+        _refreshIntervalSeconds.value = seconds
+    }
+
+    fun clearCache(): Int {
+        val count = candleCache.size
+        candleCache.clear()
+        return count
     }
 
     private fun handleWebSocketUpdates(updates: List<LiveTickerUpdate>) {
@@ -411,8 +478,58 @@ class TradingRepository(
                     AlertDirection.ABOVE -> currentPrice >= alert.targetPrice
                     AlertDirection.BELOW -> currentPrice <= alert.targetPrice
                 }
-                if (hit) alert.copy(isTriggered = true) else alert
+                if (hit) {
+                    notificationManager.notifyPriceTarget(
+                        alertId = alert.id,
+                        symbol = alert.assetSymbol,
+                        targetPrice = alert.targetPrice,
+                        currentPrice = currentPrice,
+                        directionAbove = alert.direction == AlertDirection.ABOVE
+                    )
+                    alert.copy(isTriggered = true, lastTriggeredTime = System.currentTimeMillis())
+                } else alert
             } else alert
+        }
+    }
+
+    fun toggleFavorite(assetId: String) {
+        val isFav = watchlistRepository.toggleFavorite(assetId)
+        _assets.value = _assets.value.map {
+            if (it.id.equals(assetId, ignoreCase = true)) it.copy(isFavorite = isFav) else it
+        }
+        if (isFav) {
+            notificationManager.notifyWatchlistUpdate(assetId.uppercase(), "Added to priority Watchlist")
+        }
+    }
+
+    suspend fun refreshNews(forceRefresh: Boolean = false) {
+        try {
+            val freshNews = financialNewsService.fetchMarketNews(forceRefresh)
+            if (freshNews.isNotEmpty()) {
+                _news.value = freshNews
+                freshNews.firstOrNull { it.impactLevel == com.example.data.model.NewsImpactLevel.HIGH }?.let { highNews ->
+                    notificationManager.notifyNews(highNews)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("TradingRepo", "Failed refreshing news: ${e.message}")
+        }
+    }
+
+    suspend fun refreshScanner(timeframe: com.example.data.model.CandleTimeframe = com.example.data.model.CandleTimeframe.H1) {
+        try {
+            val assetsToScan = _assets.value.take(12)
+            val scanned = mutableListOf<com.example.data.model.ScannerItem>()
+            for (asset in assetsToScan) {
+                val candles = getCandles(asset.id, timeframe)
+                val item = com.example.data.scanner.MarketScannerEngine.scanAsset(asset, candles, timeframe)
+                scanned.add(item)
+            }
+            if (scanned.isNotEmpty()) {
+                _scannerItems.value = scanned
+            }
+        } catch (e: Exception) {
+            Log.w("TradingRepo", "Failed scanning market assets: ${e.message}")
         }
     }
 
@@ -955,7 +1072,7 @@ class TradingRepository(
 
         fun initialScannerItems(): List<ScannerItem> = listOf(
             ScannerItem(
-                id = "scan_1",
+                id = "scan_btc_1h",
                 symbol = "BTC/USDT",
                 name = "Bitcoin",
                 category = AssetCategory.CRYPTO,
@@ -964,10 +1081,16 @@ class TradingRepository(
                 emaCondition = "Above 200 EMA",
                 volumeMultiplier = 2.4,
                 aiScore = 94,
-                matchedCriteria = listOf("RSI Oversold Bounce", "MACD Golden Cross", "Volume Spike")
+                matchedCriteria = listOf("RSI Oversold (<30)", "MACD Crossovers", "High Volume (RVOL > 1.5x)", "BOS & CHoCH"),
+                verifiedPrice = 67450.0,
+                change24hPercent = 2.84,
+                detectedCondition = "BOS & CHoCH Breakout",
+                timeframe = "1H",
+                lastUpdated = "Live",
+                assetId = "BTC"
             ),
             ScannerItem(
-                id = "scan_2",
+                id = "scan_xau_1h",
                 symbol = "XAU/USD",
                 name = "Gold Spot",
                 category = AssetCategory.COMMODITIES,
@@ -976,10 +1099,16 @@ class TradingRepository(
                 emaCondition = "Above 50 & 200 EMA",
                 volumeMultiplier = 1.8,
                 aiScore = 89,
-                matchedCriteria = listOf("200 EMA Breakout", "Trend Continuation")
+                matchedCriteria = listOf("Strong Bullish Trend", "EMA Crossovers", "High Volume (RVOL > 1.5x)"),
+                verifiedPrice = 2742.50,
+                change24hPercent = 1.15,
+                detectedCondition = "Strong Bullish Trend",
+                timeframe = "1H",
+                lastUpdated = "Live",
+                assetId = "GOLD"
             ),
             ScannerItem(
-                id = "scan_3",
+                id = "scan_sol_1h",
                 symbol = "SOL/USDT",
                 name = "Solana",
                 category = AssetCategory.CRYPTO,
@@ -988,10 +1117,16 @@ class TradingRepository(
                 emaCondition = "Testing 100 EMA",
                 volumeMultiplier = 3.1,
                 aiScore = 91,
-                matchedCriteria = listOf("RSI Oversold (<30)", "Volume Spike", "Support Confluence")
+                matchedCriteria = listOf("RSI Oversold (<30)", "High Volume (RVOL > 1.5x)", "Near Support (≤0.8%)", "Active FVG Zones"),
+                verifiedPrice = 178.20,
+                change24hPercent = -2.14,
+                detectedCondition = "RSI Oversold (<30)",
+                timeframe = "1H",
+                lastUpdated = "Live",
+                assetId = "SOL"
             ),
             ScannerItem(
-                id = "scan_4",
+                id = "scan_wti_1h",
                 symbol = "WTI/USD",
                 name = "Crude Oil",
                 category = AssetCategory.COMMODITIES,
@@ -1000,19 +1135,31 @@ class TradingRepository(
                 emaCondition = "Below 50 EMA",
                 volumeMultiplier = 1.2,
                 aiScore = 48,
-                matchedCriteria = listOf("RSI Overbought Rejection", "Bearish Divergence")
+                matchedCriteria = listOf("Near Resistance (≤0.8%)", "Liquidity Sweeps"),
+                verifiedPrice = 71.85,
+                change24hPercent = -0.72,
+                detectedCondition = "Near Resistance (≤0.8%)",
+                timeframe = "1H",
+                lastUpdated = "Live",
+                assetId = "OIL_WTI"
             ),
             ScannerItem(
-                id = "scan_5",
+                id = "scan_eth_1h",
                 symbol = "ETH/USDT",
                 name = "Ethereum",
                 category = AssetCategory.CRYPTO,
                 rsi14 = 44.1,
                 macdStatus = "Consolidating",
                 emaCondition = "At 200 EMA",
-                volumeMultiplier = 0.9,
-                aiScore = 72,
-                matchedCriteria = listOf("Bollinger Squeeze", "Range Compression")
+                volumeMultiplier = 1.6,
+                aiScore = 76,
+                matchedCriteria = listOf("Active FVG Zones", "High Volume (RVOL > 1.5x)", "Near Support (≤0.8%)"),
+                verifiedPrice = 2580.0,
+                change24hPercent = 1.45,
+                detectedCondition = "Active FVG Zones",
+                timeframe = "1H",
+                lastUpdated = "Live",
+                assetId = "ETH"
             )
         )
 
@@ -1073,7 +1220,20 @@ class TradingRepository(
         timeframe: CandleTimeframe,
         limit: Int = 250
     ): List<Candle> {
-        return candleService.fetchCandles(symbol, timeframe, limit)
+        val effectiveLimit = if (_isLowPerformanceMode.value) minOf(limit, 45) else limit
+        val cacheKey = "${symbol}_${timeframe.name}_$effectiveLimit"
+        val now = System.currentTimeMillis()
+
+        if (_isDataSavingMode.value) {
+            val cached = candleCache[cacheKey]
+            if (cached != null && (now - cached.first) < 60_000L) {
+                return cached.second
+            }
+        }
+
+        val candles = candleService.fetchCandles(symbol, timeframe, effectiveLimit)
+        candleCache[cacheKey] = Pair(now, candles)
+        return candles
     }
 
     suspend fun calculateTechnicalAnalysis(
@@ -1084,4 +1244,110 @@ class TradingRepository(
         val candles = candleService.fetchCandles(symbol, timeframe)
         TechnicalIndicatorsEngine.analyze(symbol, assetName, timeframe, candles)
     }
+
+    suspend fun calculateSmcAnalysis(
+        symbol: String,
+        assetName: String,
+        timeframe: CandleTimeframe
+    ): SmcAnalysisResult = withContext(Dispatchers.Default) {
+        val candles = candleService.fetchCandles(symbol, timeframe, 160)
+
+        // Multi-timeframe snapshots for key timeframes: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w
+        val mtfTimeframes = listOf(
+            CandleTimeframe.W1,
+            CandleTimeframe.D1,
+            CandleTimeframe.H4,
+            CandleTimeframe.H1,
+            CandleTimeframe.M30,
+            CandleTimeframe.M15,
+            CandleTimeframe.M5,
+            CandleTimeframe.M1
+        )
+        val snapshots = mutableListOf<TimeframeSmcSnapshot>()
+        for (tf in mtfTimeframes) {
+            val tfCandles = if (tf == timeframe) candles else candleService.fetchCandles(symbol, tf, 50)
+            if (tfCandles.size >= 15) {
+                val tempResult = SmcCalculationEngine.analyze(symbol, assetName, tf, tfCandles)
+                val isBullish = tempResult.marketStructure.trendState == MarketTrendState.BULLISH_UPTREND ||
+                        tempResult.marketStructure.isBullishBOSPresent ||
+                        tempResult.marketStructure.isBullishCHoCHPresent
+                snapshots.add(
+                    TimeframeSmcSnapshot(
+                        timeframe = tf,
+                        trend = tempResult.marketStructure.trendState,
+                        lastBreakType = tempResult.marketStructure.latestBreak?.type,
+                        unmitigatedOBCount = tempResult.orderBlocks.count { it.status == OrderBlockStatus.UNMITIGATED },
+                        unfilledFvgCount = tempResult.fairValueGaps.count { it.status == FvgStatus.UNFILLED },
+                        nearestSupport = tempResult.priceZones.firstOrNull { it.type == PriceZoneType.SUPPORT || it.type == PriceZoneType.DEMAND }?.centralPrice,
+                        nearestResistance = tempResult.priceZones.firstOrNull { it.type == PriceZoneType.RESISTANCE || it.type == PriceZoneType.SUPPLY }?.centralPrice,
+                        isBullishBias = isBullish
+                    )
+                )
+            }
+        }
+
+        SmcCalculationEngine.analyze(symbol, assetName, timeframe, candles, snapshots)
+    }
+
+    suspend fun calculateAiSignal(
+        symbol: String,
+        assetName: String,
+        timeframe: CandleTimeframe = CandleTimeframe.H1
+    ): AiTradingSignal = withContext(Dispatchers.Default) {
+        val asset = _assets.value.firstOrNull { it.symbol.equals(symbol, ignoreCase = true) || it.id.equals(symbol, ignoreCase = true) }
+        val currentPrice = asset?.currentPrice ?: 0.0
+        val dataStatus = asset?.dataStatus ?: MarketDataStatus.UNAVAILABLE
+        val dataSourceName = asset?.dataSourceName ?: "Binance Public REST"
+        val lastUpdated = asset?.lastUpdated
+
+        val candles = candleService.fetchCandles(symbol, timeframe, 160)
+        val ta = if (candles.size >= 15) TechnicalIndicatorsEngine.analyze(symbol, assetName, timeframe, candles) else null
+        val smc = if (candles.size >= 15) calculateSmcAnalysis(symbol, assetName, timeframe) else null
+
+        AiTradingSignalEngine.generateSignal(
+            symbol = symbol,
+            assetName = assetName,
+            currentPrice = currentPrice,
+            dataStatus = dataStatus,
+            dataSourceName = dataSourceName,
+            lastUpdatedTime = lastUpdated,
+            primaryTimeframe = timeframe,
+            candles = candles,
+            technicalAnalysis = ta,
+            smcAnalysis = smc,
+            mtfSnapshots = smc?.multiTimeframe?.snapshots ?: emptyList()
+        )
+    }
+
+    suspend fun refreshAiSignals(): List<AiTradingSignal> = withContext(Dispatchers.IO) {
+        val symbolsToScan = listOf(
+            Pair("BTC", "Bitcoin"),
+            Pair("ETH", "Ethereum"),
+            Pair("SOL", "Solana"),
+            Pair("BNB", "BNB"),
+            Pair("XRP", "XRP"),
+            Pair("DOGE", "Dogecoin"),
+            Pair("ADA", "Cardano"),
+            Pair("LINK", "Chainlink")
+        )
+
+        val results = mutableListOf<AiTradingSignal>()
+        for ((sym, name) in symbolsToScan) {
+            try {
+                val sig = calculateAiSignal(sym, name, CandleTimeframe.H1)
+                results.add(sig)
+            } catch (e: Exception) {
+                Log.w("TradingRepo", "Failed to generate AI signal for $sym: ${e.message}")
+            }
+        }
+
+        if (results.isNotEmpty()) {
+            _aiSignals.value = results
+            // Sync to legacy _signals so Dashboard and other screens display real live signals
+            _signals.value = results.map { it.toLegacySignal() }
+        }
+
+        results
+    }
 }
+

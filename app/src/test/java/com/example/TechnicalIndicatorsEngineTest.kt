@@ -179,7 +179,8 @@ class TechnicalIndicatorsEngineTest {
         val volumes = DoubleArray(sampleCandles.size) { sampleCandles[it].volume }
         val rvol = TechnicalIndicatorsEngine.calculateRvol(volumes, 20)
         assertNotNull(rvol)
-        assertTrue(rvol!! > 0.0)
+        val rvolValue: Double = rvol ?: 0.0
+        assertTrue(rvolValue > 0.0)
 
         val vd = TechnicalIndicatorsEngine.calculateVolumeDelta(sampleCandles)
         assertNotNull(vd)

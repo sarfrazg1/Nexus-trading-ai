@@ -79,6 +79,9 @@ import com.example.ui.theme.NexusNeonGreen
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.data.smc.SmcAnalysisResult
+import com.example.ui.viewmodel.AnalysisMode
+import com.example.ui.viewmodel.SmcCategoryTab
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
@@ -86,15 +89,21 @@ import kotlin.math.min
 @Composable
 fun TechnicalAnalysisScreen(
     analysis: OverallAnalysisResult?,
+    smcAnalysis: SmcAnalysisResult?,
     candles: List<Candle>,
     isLoading: Boolean,
     selectedSymbol: String,
     selectedTimeframe: CandleTimeframe,
     selectedCategory: IndicatorCategory,
+    analysisMode: AnalysisMode,
+    selectedSmcTab: SmcCategoryTab,
     errorMessage: String?,
     onSymbolSelected: (String) -> Unit,
     onTimeframeSelected: (CandleTimeframe) -> Unit,
     onCategorySelected: (IndicatorCategory) -> Unit,
+    onAnalysisModeChange: (AnalysisMode) -> Unit,
+    onSmcTabChange: (SmcCategoryTab) -> Unit,
+    onInfoClick: (String) -> Unit,
     onRefresh: () -> Unit,
     onSetAlert: (String) -> Unit,
     onBackClick: () -> Unit,
@@ -298,14 +307,72 @@ fun TechnicalAnalysisScreen(
             }
         }
 
-        // 4. OVERALL SENTIMENT & CONSENSUS HERO CARD
+        // 4. ENGINE MODE SWITCHER: SMART MONEY & FIB vs 22 INDICATORS
         item {
-            if (analysis != null) {
-                SentimentOverviewCard(
-                    analysis = analysis,
-                    onSetAlert = { onSetAlert(analysis.symbol) }
-                )
-            } else if (errorMessage != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(NavySurface, RoundedCornerShape(10.dp))
+                    .border(1.dp, NavyBorder, RoundedCornerShape(10.dp))
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (analysisMode == AnalysisMode.SMC_FIBONACCI) NexusGold else Color.Transparent)
+                        .clickable { onAnalysisModeChange(AnalysisMode.SMC_FIBONACCI) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = if (analysisMode == AnalysisMode.SMC_FIBONACCI) NavyBackground else NexusGold,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "SMART MONEY & FIB",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            color = if (analysisMode == AnalysisMode.SMC_FIBONACCI) NavyBackground else TextPrimary
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (analysisMode == AnalysisMode.INDICATORS) NexusGold else Color.Transparent)
+                        .clickable { onAnalysisModeChange(AnalysisMode.INDICATORS) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Timeline,
+                            contentDescription = null,
+                            tint = if (analysisMode == AnalysisMode.INDICATORS) NavyBackground else NexusGold,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "22 INDICATORS",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            color = if (analysisMode == AnalysisMode.INDICATORS) NavyBackground else TextPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        if (errorMessage != null) {
+            item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = NavySurface),
@@ -326,116 +393,254 @@ fun TechnicalAnalysisScreen(
             }
         }
 
-        // 5. MINI CANDLESTICK / PRICE ACTION PREVIEW
-        if (candles.isNotEmpty()) {
-            item {
-                CandlestickPreviewCard(
-                    candles = candles,
-                    symbol = selectedSymbol,
-                    timeframe = selectedTimeframe
-                )
+        // ==========================================
+        // SMC & FIBONACCI MODE
+        // ==========================================
+        if (analysisMode == AnalysisMode.SMC_FIBONACCI) {
+            // SMC Candlestick Chart Overlay
+            if (candles.isNotEmpty()) {
+                item {
+                    SmcCandlestickChart(
+                        candles = candles,
+                        smc = smcAnalysis
+                    )
+                }
             }
-        }
 
-        // 6. WARNING BANNERS (IF INSUFFICIENT DATA)
-        if (analysis != null && analysis.warnings.isNotEmpty()) {
+            // SMC Category Filter Tabs
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    analysis.warnings.forEach { warn ->
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp)
+                ) {
+                    items(SmcCategoryTab.entries) { tab ->
+                        val isSelected = tab == selectedSmcTab
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .background(NexusGold.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
-                                .border(1.dp, NexusGold.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(if (isSelected) NexusGold else NavySurface)
+                                .border(1.dp, if (isSelected) NexusGold else NavyBorder, RoundedCornerShape(20.dp))
+                                .clickable { onSmcTabChange(tab) }
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = NexusGold,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = warn,
-                                    fontSize = 11.sp,
-                                    color = NexusGold,
-                                    lineHeight = 15.sp
-                                )
-                            }
+                            Text(
+                                text = tab.label,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) NavyBackground else TextSecondary
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (smcAnalysis != null) {
+                // 1. Market Structure (BOS & CHoCH, HH, HL, LH, LL)
+                if (selectedSmcTab == SmcCategoryTab.ALL || selectedSmcTab == SmcCategoryTab.STRUCTURE) {
+                    item {
+                        MarketStructureSection(
+                            smc = smcAnalysis,
+                            onInfoClick = onInfoClick
+                        )
+                    }
+                }
+
+                // 2. Order Blocks (Bullish & Bearish with mitigation)
+                if (selectedSmcTab == SmcCategoryTab.ALL || selectedSmcTab == SmcCategoryTab.ORDER_BLOCKS) {
+                    item {
+                        OrderBlocksSection(
+                            orderBlocks = smcAnalysis.orderBlocks,
+                            onInfoClick = onInfoClick
+                        )
+                    }
+                }
+
+                // 3. Fair Value Gaps (Bullish & Bearish with fill status)
+                if (selectedSmcTab == SmcCategoryTab.ALL || selectedSmcTab == SmcCategoryTab.FVG) {
+                    item {
+                        FairValueGapsSection(
+                            fvgs = smcAnalysis.fairValueGaps,
+                            onInfoClick = onInfoClick
+                        )
+                    }
+                }
+
+                // 4. Liquidity & Stop-Hunt (BSL, SSL, EQH, EQL, Sweeps)
+                if (selectedSmcTab == SmcCategoryTab.ALL || selectedSmcTab == SmcCategoryTab.LIQUIDITY) {
+                    item {
+                        LiquidityAnalysisSection(
+                            smc = smcAnalysis,
+                            onInfoClick = onInfoClick
+                        )
+                    }
+                }
+
+                // 5. Fibonacci Retracements, Extensions & Supply/Demand
+                if (selectedSmcTab == SmcCategoryTab.ALL || selectedSmcTab == SmcCategoryTab.FIBONACCI_SR) {
+                    item {
+                        FibonacciAndSupportResistanceSection(
+                            smc = smcAnalysis,
+                            onInfoClick = onInfoClick
+                        )
+                    }
+                }
+
+                // 6. Multi-Timeframe Analysis (1m, 5m, 15m, 30m, 1h, 4h, 1D, 1W)
+                if (selectedSmcTab == SmcCategoryTab.ALL || selectedSmcTab == SmcCategoryTab.MULTI_TIMEFRAME) {
+                    item {
+                        MultiTimeframeAnalysisSection(
+                            smc = smcAnalysis,
+                            onInfoClick = onInfoClick
+                        )
+                    }
+                }
+            } else if (isLoading) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = NexusGold)
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Analyzing Smart Money Concepts, Liquidity & Fibonacci levels...",
+                                fontSize = 12.sp,
+                                color = TextSecondary
+                            )
                         }
                     }
                 }
             }
         }
 
-        // 7. CATEGORY FILTER TABS
-        item {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(horizontal = 2.dp)
-            ) {
-                items(IndicatorCategory.entries) { cat ->
-                    val isSelected = cat == selectedCategory
-                    val count = if (analysis != null) {
-                        if (cat == IndicatorCategory.ALL) analysis.cards.size
-                        else analysis.cards.count { it.category == cat }
-                    } else 0
+        // ==========================================
+        // 22 INDICATORS MODE
+        // ==========================================
+        if (analysisMode == AnalysisMode.INDICATORS) {
+            // Sentiment & Consensus Hero Card
+            item {
+                if (analysis != null) {
+                    SentimentOverviewCard(
+                        analysis = analysis,
+                        onSetAlert = { onSetAlert(analysis.symbol) }
+                    )
+                }
+            }
 
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(
-                                if (isSelected) NexusGold.copy(alpha = 0.2f)
-                                else NavySurface
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (isSelected) NexusGold else NavyBorder,
-                                shape = RoundedCornerShape(20.dp)
-                            )
-                            .clickable { onCategorySelected(cat) }
-                            .padding(horizontal = 14.dp, vertical = 7.dp)
-                    ) {
-                        Text(
-                            text = "${cat.label} ($count)",
-                            fontSize = 12.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) NexusGold else TextSecondary
-                        )
+            // Candlestick Preview Card
+            if (candles.isNotEmpty()) {
+                item {
+                    CandlestickPreviewCard(
+                        candles = candles,
+                        symbol = selectedSymbol,
+                        timeframe = selectedTimeframe
+                    )
+                }
+            }
+
+            // Warning Banners (If Any)
+            if (analysis != null && analysis.warnings.isNotEmpty()) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        analysis.warnings.forEach { warn ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(NexusGold.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                                    .border(1.dp, NexusGold.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = NexusGold,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = warn,
+                                        fontSize = 11.sp,
+                                        color = NexusGold,
+                                        lineHeight = 15.sp
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
-        }
 
-        // 8. INDICATOR CARDS LIST
-        if (analysis != null) {
-            val filteredCards = if (selectedCategory == IndicatorCategory.ALL) {
-                analysis.cards
-            } else {
-                analysis.cards.filter { it.category == selectedCategory }
-            }
-
-            items(filteredCards, key = { it.id }) { card ->
-                IndicatorItemCard(card = card)
-            }
-        } else if (isLoading) {
+            // Category Filter Tabs
             item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 40.dp),
-                    contentAlignment = Alignment.Center
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp)
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = NexusGold)
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Streaming historical candles & computing 22 indicators...",
-                            fontSize = 12.sp,
-                            color = TextSecondary
-                        )
+                    items(IndicatorCategory.entries) { cat ->
+                        val isSelected = cat == selectedCategory
+                        val count = if (analysis != null) {
+                            if (cat == IndicatorCategory.ALL) analysis.cards.size
+                            else analysis.cards.count { it.category == cat }
+                        } else 0
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    if (isSelected) NexusGold.copy(alpha = 0.2f)
+                                    else NavySurface
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) NexusGold else NavyBorder,
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                                .clickable { onCategorySelected(cat) }
+                                .padding(horizontal = 14.dp, vertical = 7.dp)
+                        ) {
+                            Text(
+                                text = "${cat.label} ($count)",
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) NexusGold else TextSecondary
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Indicator Cards List
+            if (analysis != null) {
+                val filteredCards = if (selectedCategory == IndicatorCategory.ALL) {
+                    analysis.cards
+                } else {
+                    analysis.cards.filter { it.category == selectedCategory }
+                }
+
+                items(filteredCards, key = { it.id }) { card ->
+                    IndicatorItemCard(card = card)
+                }
+            } else if (isLoading) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = NexusGold)
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Streaming historical candles & computing 22 indicators...",
+                                fontSize = 12.sp,
+                                color = TextSecondary
+                            )
+                        }
                     }
                 }
             }

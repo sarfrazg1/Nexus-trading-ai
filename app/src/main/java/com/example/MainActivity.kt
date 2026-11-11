@@ -27,11 +27,16 @@ import com.example.data.model.ConnectionStatus
 import com.example.data.model.NavigationTab
 import com.example.ui.components.BottomNavBar
 import com.example.ui.components.NexusTopBar
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.ui.dialogs.AddAlertDialog
 import com.example.ui.dialogs.ApiConfigDialog
 import com.example.ui.dialogs.AssetDetailDialog
+import com.example.ui.dialogs.EconomicGlossaryDialog
 import com.example.ui.dialogs.NewsDetailDialog
+import com.example.ui.dialogs.RomanUrduGlossaryDialog
 import com.example.ui.screens.DashboardScreen
+import com.example.ui.screens.LearningCenterScreen
 import com.example.ui.screens.MarketsScreen
 import com.example.ui.screens.NewsScreen
 import com.example.ui.screens.ScannerScreen
@@ -47,8 +52,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            NexusTradingTheme {
-                NexusTradingApp()
+            val viewModel: TradingViewModel = viewModel()
+            val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+            NexusTradingTheme(themeMode = uiState.themeMode) {
+                NexusTradingApp(viewModel = viewModel)
             }
         }
     }
@@ -62,6 +69,23 @@ fun NexusTradingApp(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    LaunchedEffect(Unit) {
+        viewModel.bindLearningContext(context)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val isGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!isGranted) {
+                notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     // Trigger user messages in snackbar
     LaunchedEffect(uiState.userMessage) {
         uiState.userMessage?.let { msg ->
@@ -72,13 +96,19 @@ fun NexusTradingApp(
 
     // Predictive back handler
     BackHandler(
-        enabled = uiState.selectedAssetDetail != null ||
+        enabled = uiState.selectedGlossaryTerm != null ||
+                uiState.selectedEconomicTerm != null ||
+                uiState.selectedLessonForDetail != null ||
+                uiState.selectedAssetDetail != null ||
                 uiState.selectedNewsDetail != null ||
                 uiState.showAddAlertDialog ||
                 uiState.selectedApiConfigForEdit != null ||
                 uiState.currentTab != NavigationTab.DASHBOARD
     ) {
         when {
+            uiState.selectedGlossaryTerm != null -> viewModel.closeGlossaryDialog()
+            uiState.selectedEconomicTerm != null -> viewModel.dismissEconomicGlossary()
+            uiState.selectedLessonForDetail != null -> viewModel.closeLessonDetail()
             uiState.selectedAssetDetail != null -> viewModel.closeAssetDetail()
             uiState.selectedNewsDetail != null -> viewModel.closeNewsDetail()
             uiState.showAddAlertDialog -> viewModel.closeAddAlertDialog()
@@ -92,22 +122,25 @@ fun NexusTradingApp(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = NavyBackground,
+        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.background,
         topBar = {
             NexusTopBar(
                 isWebSocketLive = uiState.isWebSocketLive,
                 btcStatus = btcStatus,
                 activeAlertsCount = activeAlertsCount,
                 isRefreshing = uiState.isRefreshing,
+                isLowPerformanceMode = uiState.isLowPerformanceMode,
                 onRefreshClick = { viewModel.refreshMarketData() },
                 onAddAlertClick = { viewModel.openAddAlertDialog("BTC/USDT") },
-                onOpenAnalysisClick = { viewModel.openTechnicalAnalysis("BTC") }
+                onOpenAnalysisClick = { viewModel.openTechnicalAnalysis("BTC") },
+                onOpenLearningClick = { viewModel.selectTab(NavigationTab.LEARNING) }
             )
         },
         bottomBar = {
             BottomNavBar(
                 currentTab = uiState.currentTab,
-                onTabSelected = { tab -> viewModel.selectTab(tab) }
+                onTabSelected = { tab -> viewModel.selectTab(tab) },
+                languageMode = uiState.learningLanguageMode
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
@@ -116,7 +149,7 @@ fun NexusTradingApp(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(NavyBackground)
+                .background(androidx.compose.material3.MaterialTheme.colorScheme.background)
         ) {
             when (uiState.currentTab) {
                 NavigationTab.DASHBOARD -> {
@@ -148,7 +181,8 @@ fun NexusTradingApp(
                             )
                             clipboard.setPrimaryClip(clip)
                             viewModel.createAlert(signal.assetSymbol, signal.assetName, 0.0, com.example.data.model.AlertDirection.ABOVE, "Copied signal levels")
-                        }
+                        },
+                        onToggleFavorite = { id -> viewModel.toggleFavorite(id) }
                     )
                 }
 
@@ -171,22 +205,29 @@ fun NexusTradingApp(
                             viewModel.openApiConfigDialog(feed)
                         },
                         onSetAlertClick = { symbol -> viewModel.openAddAlertDialog(symbol) },
-                        onOpenTechnicalAnalysis = { symbol -> viewModel.openTechnicalAnalysis(symbol) }
+                        onOpenTechnicalAnalysis = { symbol -> viewModel.openTechnicalAnalysis(symbol) },
+                        onToggleFavorite = { id -> viewModel.toggleFavorite(id) }
                     )
                 }
 
                 NavigationTab.ANALYSIS -> {
                     TechnicalAnalysisScreen(
                         analysis = uiState.technicalAnalysis,
+                        smcAnalysis = uiState.smcAnalysis,
                         candles = uiState.analysisCandles,
                         isLoading = uiState.isCalculatingAnalysis,
                         selectedSymbol = uiState.analysisAssetSymbol,
                         selectedTimeframe = uiState.analysisTimeframe,
                         selectedCategory = uiState.selectedIndicatorCategory,
+                        analysisMode = uiState.analysisMode,
+                        selectedSmcTab = uiState.selectedSmcTab,
                         errorMessage = uiState.analysisError,
                         onSymbolSelected = { sym -> viewModel.setAnalysisAsset(sym) },
                         onTimeframeSelected = { tf -> viewModel.setAnalysisTimeframe(tf) },
                         onCategorySelected = { cat -> viewModel.setIndicatorCategory(cat) },
+                        onAnalysisModeChange = { mode -> viewModel.setAnalysisMode(mode) },
+                        onSmcTabChange = { tab -> viewModel.setSmcTab(tab) },
+                        onInfoClick = { term -> viewModel.openGlossaryTerm(term) },
                         onRefresh = { viewModel.loadTechnicalAnalysis() },
                         onSetAlert = { sym -> viewModel.openAddAlertDialog(sym) },
                         onBackClick = { viewModel.selectTab(NavigationTab.MARKETS) }
@@ -195,6 +236,17 @@ fun NexusTradingApp(
 
                 NavigationTab.AI_SIGNALS -> {
                     SignalsScreen(
+                        currentAiSignal = uiState.currentAiSignal,
+                        isAnalyzing = uiState.isAnalyzingSignal,
+                        selectedSymbol = uiState.selectedSignalAssetSymbol,
+                        selectedTimeframe = uiState.selectedSignalTimeframe,
+                        isExpanded = uiState.isSignalExpanded,
+                        onAssetSelected = { sym -> viewModel.setSignalAsset(sym) },
+                        onTimeframeSelected = { tf -> viewModel.setSignalTimeframe(tf) },
+                        onAnalyzeClick = { viewModel.loadAiSignal() },
+                        onToggleExpanded = { viewModel.toggleSignalExpanded() },
+                        onInfoClick = { term -> viewModel.openGlossaryTerm(term) },
+                        aiSignalsList = uiState.aiSignalsList,
                         signals = uiState.signals,
                         signalFilter = uiState.signalFilter,
                         onFilterSelected = { filter -> viewModel.setSignalFilter(filter) },
@@ -210,12 +262,57 @@ fun NexusTradingApp(
                     )
                 }
 
+                NavigationTab.NEXUS_AI -> {
+                    com.example.ui.screens.NexusAiScreen(
+                        messages = uiState.aiMessages,
+                        conversations = uiState.aiConversations,
+                        currentConversationId = uiState.currentAiConversationId,
+                        isLoading = uiState.isAiLoading,
+                        isOnlineAiAvailable = uiState.isOnlineAiAvailable,
+                        currentAssetSymbol = uiState.analysisAssetSymbol,
+                        currentAssetPrice = uiState.selectedAssetDetail?.currentPrice ?: 95000.0,
+                        languageMode = uiState.learningLanguageMode,
+                        urduFontSize = uiState.urduFontSize,
+                        onSendMessage = { query -> viewModel.sendAiMessage(query) },
+                        onNewChat = { viewModel.newAiChat() },
+                        onClearChat = { viewModel.clearAiChat() },
+                        onDeleteConversation = { id -> viewModel.deleteAiConversation(id) },
+                        onSelectConversation = { id -> viewModel.selectAiConversation(id) },
+                        onAttachCurrentMarket = { viewModel.attachCurrentMarketToAi() }
+                    )
+                }
+
+                NavigationTab.LEARNING -> {
+                    LearningCenterScreen(
+                        languageMode = uiState.learningLanguageMode,
+                        selectedCategory = uiState.selectedLessonCategory,
+                        searchQuery = uiState.learningSearchQuery,
+                        bookmarkedLessonIds = uiState.bookmarkedLessonIds,
+                        completedLessonIds = uiState.completedLessonIds,
+                        recentlyViewedLessonIds = uiState.recentlyViewedLessonIds,
+                        selectedLesson = uiState.selectedLessonForDetail,
+                        onLanguageModeChange = { mode -> viewModel.setLearningLanguageMode(mode) },
+                        onCategorySelect = { cat -> viewModel.selectLessonCategory(cat) },
+                        onSearchQueryChange = { query -> viewModel.setLearningSearchQuery(query) },
+                        onSelectLesson = { lesson -> viewModel.openLessonDetail(lesson) },
+                        onCloseLessonDetail = { viewModel.closeLessonDetail() },
+                        onToggleBookmark = { id -> viewModel.toggleLessonBookmark(id) },
+                        onToggleCompleted = { id -> viewModel.toggleLessonCompleted(id) },
+                        onPreviousLesson = { viewModel.openPreviousLesson() },
+                        onNextLesson = { viewModel.openNextLesson() }
+                    )
+                }
+
                 NavigationTab.SCANNER -> {
                     ScannerScreen(
                         scannerItems = uiState.scannerItems,
                         scannerFilter = uiState.scannerFilter,
                         onFilterSelected = { filter -> viewModel.setScannerFilter(filter) },
-                        onSetAlertClick = { symbol -> viewModel.openAddAlertDialog(symbol) }
+                        onSetAlertClick = { symbol -> viewModel.openAddAlertDialog(symbol) },
+                        selectedTimeframe = uiState.scannerTimeframe,
+                        onTimeframeSelected = { tf -> viewModel.setScannerTimeframe(tf) },
+                        onInspectAsset = { assetId, symbol -> viewModel.inspectAssetInAnalysis(assetId, symbol) },
+                        onRefreshScanner = { viewModel.refreshScanner() }
                     )
                 }
 
@@ -225,15 +322,44 @@ fun NexusTradingApp(
                         newsFilter = uiState.newsFilter,
                         onFilterSelected = { filter -> viewModel.setNewsFilter(filter) },
                         onNewsClick = { newsItem -> viewModel.openNewsDetail(newsItem) },
-                        onToggleBookmark = { id -> viewModel.toggleNewsBookmark(id) }
+                        onToggleBookmark = { id -> viewModel.toggleNewsBookmark(id) },
+                        onRefreshNews = { viewModel.refreshNews() },
+                        onOpenGlossaryTerm = { term -> viewModel.openEconomicGlossary(term) }
                     )
                 }
 
                 NavigationTab.SETTINGS -> {
+                    val settingsState = com.example.data.settings.AppSettingsState(
+                        themeMode = uiState.themeMode,
+                        languageMode = uiState.learningLanguageMode,
+                        urduFontSize = uiState.urduFontSize,
+                        isDataSavingMode = uiState.isDataSavingMode,
+                        isLowPerformanceMode = uiState.isLowPerformanceMode,
+                        defaultTimeframe = uiState.defaultChartTimeframe,
+                        defaultWatchlistCategory = uiState.defaultWatchlistCategory,
+                        alertNotificationsEnabled = uiState.alertNotificationsEnabled,
+                        soundEffectsEnabled = uiState.soundEffectsEnabled,
+                        refreshRate = uiState.refreshRate,
+                        lastCacheClearedTimestamp = uiState.lastCacheClearedTimestamp,
+                        lastMarketRefreshTimestamp = uiState.lastMarketDataRefreshTimestamp
+                    )
+
                     SettingsScreen(
+                        settingsState = settingsState,
                         apiConfigs = uiState.apiConfigs,
+                        onThemeSelect = { mode -> viewModel.setThemeMode(mode) },
+                        onLanguageSelect = { lang -> viewModel.setAppLanguageMode(lang) },
+                        onDataSavingToggle = { enabled -> viewModel.setDataSavingMode(enabled) },
+                        onLowPerformanceToggle = { enabled -> viewModel.setLowPerformanceMode(enabled) },
+                        onDefaultTimeframeSelect = { tf -> viewModel.setDefaultChartTimeframe(tf) },
+                        onDefaultWatchlistSelect = { cat -> viewModel.setDefaultWatchlistCategory(cat) },
+                        onRefreshRateSelect = { rate -> viewModel.setRefreshRate(rate) },
+                        onAlertsToggle = { enabled -> viewModel.setAlertNotificationsEnabled(enabled) },
+                        onSoundEffectsToggle = { enabled -> viewModel.setSoundEffectsEnabled(enabled) },
+                        onClearCacheClick = { viewModel.clearTemporaryCache() },
                         onConfigureFeed = { config -> viewModel.openApiConfigDialog(config) },
-                        onRefreshFeeds = { viewModel.refreshMarketData() }
+                        onRefreshFeeds = { viewModel.refreshMarketData() },
+                        onUrduFontSizeSelect = { size -> viewModel.setUrduFontSize(size) }
                     )
                 }
             }
@@ -276,7 +402,8 @@ fun NexusTradingApp(
             },
             onOpenTechnicalAnalysis = { symbol ->
                 viewModel.openTechnicalAnalysis(symbol)
-            }
+            },
+            onToggleFavorite = { viewModel.toggleFavorite(asset.id) }
         )
     }
 
@@ -284,7 +411,25 @@ fun NexusTradingApp(
         NewsDetailDialog(
             news = news,
             onDismiss = { viewModel.closeNewsDetail() },
-            onToggleBookmark = { viewModel.toggleNewsBookmark(news.id) }
+            onToggleBookmark = { viewModel.toggleNewsBookmark(news.id) },
+            onOpenGlossaryTerm = { term -> viewModel.openEconomicGlossary(term) }
+        )
+    }
+
+    uiState.selectedGlossaryTerm?.let { item ->
+        RomanUrduGlossaryDialog(
+            item = item,
+            initialLanguageMode = uiState.learningLanguageMode,
+            onOpenFullLesson = { lessonId -> viewModel.navigateToLessonInAcademy(lessonId) },
+            onDismiss = { viewModel.closeGlossaryDialog() }
+        )
+    }
+
+    uiState.selectedEconomicTerm?.let { term ->
+        EconomicGlossaryDialog(
+            term = term,
+            currentLanguageMode = uiState.learningLanguageMode,
+            onDismiss = { viewModel.dismissEconomicGlossary() }
         )
     }
 }

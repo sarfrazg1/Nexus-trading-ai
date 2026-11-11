@@ -41,7 +41,8 @@ data class MarketAsset(
     val sparklinePoints: List<Float> = emptyList(),
     val dataSourceInfo: String = "",
     val setupInstructions: String? = null,
-    val unit: String = "$"
+    val unit: String = "$",
+    val isFavorite: Boolean = false
 )
 
 enum class SignalType(val label: String) {
@@ -80,6 +81,15 @@ enum class AlertDirection(val symbol: String, val label: String) {
     BELOW("≤", "Crosses Below")
 }
 
+enum class AlertType(val label: String) {
+    PRICE_TARGET("Price Target"),
+    SIGNAL_LONG("Long Signal"),
+    SIGNAL_SHORT("Short Signal"),
+    IMPORTANT_NEWS("Important News"),
+    HIGH_IMPACT_EVENT("High-Impact Event"),
+    WATCHLIST_UPDATE("Watchlist Update")
+}
+
 data class MarketAlert(
     val id: String,
     val assetSymbol: String,
@@ -89,7 +99,9 @@ data class MarketAlert(
     val isActive: Boolean = true,
     val isTriggered: Boolean = false,
     val createdTime: Long = System.currentTimeMillis(),
-    val note: String = ""
+    val note: String = "",
+    val alertType: AlertType = AlertType.PRICE_TARGET,
+    val lastTriggeredTime: Long? = null
 )
 
 data class MarketOverview(
@@ -123,13 +135,31 @@ data class ScannerItem(
     val emaCondition: String,
     val volumeMultiplier: Double,
     val aiScore: Int,
-    val matchedCriteria: List<String>
+    val matchedCriteria: List<String>,
+    val verifiedPrice: Double = 0.0,
+    val change24hPercent: Double = 0.0,
+    val detectedCondition: String = "",
+    val timeframe: String = "1H",
+    val lastUpdated: String = "Just now",
+    val assetId: String = ""
 )
 
 enum class NewsImpact(val label: String) {
     BULLISH("Bullish"),
     BEARISH("Bearish"),
     NEUTRAL("Neutral")
+}
+
+enum class NewsImpactLevel(val label: String) {
+    LOW("Low Impact"),
+    MEDIUM("Medium Impact"),
+    HIGH("High Impact")
+}
+
+enum class EventStatus(val label: String) {
+    CONFIRMED("Confirmed"),
+    SCHEDULED("Scheduled Event"),
+    UNVERIFIED("Unverified Report")
 }
 
 data class MarketNews(
@@ -141,7 +171,12 @@ data class MarketNews(
     val summary: String,
     val impact: NewsImpact,
     val isSaved: Boolean = false,
-    val fullContent: String
+    val fullContent: String,
+    val url: String = "",
+    val affectedAssets: List<String> = emptyList(),
+    val impactLevel: NewsImpactLevel = NewsImpactLevel.MEDIUM,
+    val eventStatus: EventStatus = EventStatus.CONFIRMED,
+    val analysisMethod: String = "Rule-Based NLP Analysis"
 )
 
 enum class Timeframe(val label: String) {
@@ -170,7 +205,9 @@ enum class NavigationTab(val title: String) {
     MARKETS("Markets"),
     ANALYSIS("Technical Analysis"),
     AI_SIGNALS("AI Signals"),
+    NEXUS_AI("NEXUS AI"),
     SCANNER("Scanner"),
     NEWS("News"),
+    LEARNING("Learning Center"),
     SETTINGS("Settings")
 }
