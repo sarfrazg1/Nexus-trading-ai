@@ -58,7 +58,8 @@ data class MarketContextSnapshot(
     val macroEventSummary: String?,
     val dataSource: String,
     val lastUpdatedFormatted: String,
-    val isRealData: Boolean = true
+    val isRealData: Boolean = true,
+    val futuresSignalSummary: String? = null
 ) {
     fun toPromptContext(lang: LearningLanguageMode): String {
         val sb = StringBuilder()
@@ -78,6 +79,11 @@ data class MarketContextSnapshot(
         signalDecision?.let { sb.appendLine("NEXUS Signal Engine Decision: $it (Confidence: $confidenceScore/100)") }
         relevantNewsSummary?.let { sb.appendLine("Recent News Factor: $it") }
         macroEventSummary?.let { sb.appendLine("Macro Environment: $it") }
+        futuresSignalSummary?.let {
+            sb.appendLine("=== BINANCE USDT-M FUTURES SCANNER CONFLUENCE ===")
+            sb.appendLine(it)
+            sb.appendLine("==================================================")
+        }
         sb.appendLine("Data Source: $dataSource | Freshness: $lastUpdatedFormatted")
         sb.appendLine("======================================================")
         return sb.toString()

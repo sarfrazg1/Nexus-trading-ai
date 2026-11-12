@@ -141,7 +141,12 @@ data class TradingUiState(
     val currentAiConversationId: String = "default_session",
     val isAiLoading: Boolean = false,
     val isOnlineAiAvailable: Boolean = false,
-    val urduFontSize: com.example.data.settings.UrduFontSize = com.example.data.settings.UrduFontSize.MEDIUM
+    val urduFontSize: com.example.data.settings.UrduFontSize = com.example.data.settings.UrduFontSize.MEDIUM,
+
+    // Binance USDT-M Futures Auto-Scanner State
+    val futuresScannerState: com.example.data.scanner.ScannerEngineState = com.example.data.scanner.ScannerEngineState(),
+    val futuresWatchlist: List<com.example.data.scanner.FuturesWatchlistPair> = emptyList(),
+    val scannerScreenMode: Int = 0
 ) {
     val selectedAssetDetail: MarketAsset?
         get() = selectedAssetId?.let { id -> assets.firstOrNull { it.id == id } }
@@ -192,6 +197,8 @@ class TradingViewModel(
     private val learningPrefsRepo = LearningPreferencesRepository()
     private val appSettingsRepo = AppSettingsRepository()
     private var nexusAiRepo = com.example.data.ai.NexusAiRepository()
+    val futuresScannerRepo = com.example.data.scanner.FuturesScannerRepository.getInstance(notificationManager = repository.notificationManager)
+    private val _scannerScreenMode = MutableStateFlow(0)
 
     private val _selectedLessonCategory = MutableStateFlow<LessonCategory?>(null)
     private val _learningSearchQuery = MutableStateFlow("")
@@ -324,7 +331,10 @@ class TradingViewModel(
             currentAiConversationId = _currentAiConversationId.value,
             isAiLoading = _isAiLoading.value,
             isOnlineAiAvailable = nexusAiRepo.isOnlineAiAvailable(),
-            urduFontSize = appSettingsRepo.urduFontSize.value
+            urduFontSize = appSettingsRepo.urduFontSize.value,
+            futuresScannerState = futuresScannerRepo.scannerState.value,
+            futuresWatchlist = futuresScannerRepo.watchlist.value,
+            scannerScreenMode = _scannerScreenMode.value
         )
     }.stateIn(
         scope = viewModelScope,
@@ -337,6 +347,17 @@ class TradingViewModel(
         loadTechnicalAnalysis("BTC", CandleTimeframe.H1)
         loadAiSignal("BTC", CandleTimeframe.H1)
         refreshAllAiSignals()
+
+        viewModelScope.launch {
+            futuresScannerRepo.scannerState.collect {
+                _learningUpdate.value++
+            }
+        }
+        viewModelScope.launch {
+            futuresScannerRepo.watchlist.collect {
+                _learningUpdate.value++
+            }
+        }
     }
 
     fun selectTab(tab: NavigationTab) {
@@ -675,6 +696,10 @@ class TradingViewModel(
                 } ?: repository.assets.value.firstOrNull { it.id == "btc" }
                 ?: repository.assets.value.firstOrNull()
 
+                val matchedFuturesSignal = futuresScannerRepo.scannerState.value.activeSignals.firstOrNull {
+                    query.contains(it.symbol, ignoreCase = true) || query.contains(it.baseAsset, ignoreCase = true)
+                } ?: futuresScannerRepo.scannerState.value.activeSignals.firstOrNull()
+
                 val contextSnapshot = com.example.data.ai.MarketContextBuilder.buildSnapshot(
                     asset = activeAsset,
                     candles = _analysisCandles.value,
@@ -682,7 +707,8 @@ class TradingViewModel(
                     technicalAnalysis = _technicalAnalysis.value,
                     smcAnalysis = _smcAnalysis.value,
                     signal = _currentAiSignal.value,
-                    newsList = repository.news.value
+                    newsList = repository.news.value,
+                    futuresSignal = matchedFuturesSignal
                 )
 
                 val responseMsg = nexusAiRepo.generateResponse(
@@ -880,6 +906,56 @@ class TradingViewModel(
             _currentTab.value = NavigationTab.LEARNING
             _learningUpdate.value++
         }
+    }
+
+    fun setScannerScreenMode(mode: Int) {
+        _scannerScreenMode.value = mode
+        _learningUpdate.value++
+    }
+
+    fun startFuturesScanner(context: android.content.Context) {
+        com.example.data.scanner.BinanceFuturesScannerService.startService(context)
+        _userMessage.value = "Binance Futures Scanner Started"
+    }
+
+    fun stopFuturesScanner(context: android.content.Context) {
+        com.example.data.scanner.BinanceFuturesScannerService.stopService(context)
+        _userMessage.value = "Binance Futures Scanner Stopped"
+    }
+
+    fun toggleFuturesWatchlistPair(symbol: String) {
+        futuresScannerRepo.togglePairScanning(symbol)
+        _learningUpdate.value++
+    }
+
+    fun addCustomFuturesPair(symbol: String) {
+        futuresScannerRepo.addCustomPair(symbol)
+        _learningUpdate.value++
+    }
+
+    fun removeFuturesWatchlistPair(symbol: String) {
+        futuresScannerRepo.removePair(symbol)
+        _learningUpdate.value++
+    }
+
+    fun setFuturesScannerInterval(seconds: Int) {
+        futuresScannerRepo.setScanInterval(seconds)
+        _learningUpdate.value++
+    }
+
+    fun setFuturesScannerPaperTrading(enabled: Boolean) {
+        futuresScannerRepo.setPaperTradingEnabled(enabled)
+        _learningUpdate.value++
+    }
+
+    fun explainFuturesSignalWithAi(signal: com.example.data.scanner.FuturesScanSignal) {
+        val query = "Please analyze and explain the current Binance USDT-M Futures signal for ${signal.symbol} ${signal.direction.name}. Quality score is ${signal.qualityScore}% (${signal.qualityRating}). Break down the 4H, 1H, 15M, and 5M timeframe confluences, entry zones, risk parameters, and invalidation rules."
+        selectTab(NavigationTab.NEXUS_AI)
+        sendAiMessage(query)
+    }
+
+    fun simulateFuturesPaperTrade(signal: com.example.data.scanner.FuturesScanSignal) {
+        _userMessage.value = "Paper trade tracked: ${signal.symbol} ${signal.direction.name} @ ${signal.entryZoneFormatted} (TP2: ${signal.tp2Formatted}, SL: ${signal.stopLossFormatted})"
     }
 
     private data class TabAssetsOverviewSignalsAlerts(

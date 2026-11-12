@@ -312,7 +312,20 @@ fun NexusTradingApp(
                         selectedTimeframe = uiState.scannerTimeframe,
                         onTimeframeSelected = { tf -> viewModel.setScannerTimeframe(tf) },
                         onInspectAsset = { assetId, symbol -> viewModel.inspectAssetInAnalysis(assetId, symbol) },
-                        onRefreshScanner = { viewModel.refreshScanner() }
+                        onRefreshScanner = { viewModel.refreshScanner() },
+                        futuresScannerState = uiState.futuresScannerState,
+                        futuresWatchlist = uiState.futuresWatchlist,
+                        scannerScreenMode = uiState.scannerScreenMode,
+                        onModeSelected = { mode -> viewModel.setScannerScreenMode(mode) },
+                        onStartFuturesScanner = { viewModel.startFuturesScanner(context) },
+                        onStopFuturesScanner = { viewModel.stopFuturesScanner(context) },
+                        onToggleFuturesWatchlist = { symbol, _ -> viewModel.toggleFuturesWatchlistPair(symbol) },
+                        onAddCustomFuturesPair = { raw -> viewModel.addCustomFuturesPair(raw) },
+                        onRemoveFuturesPair = { symbol -> viewModel.removeFuturesWatchlistPair(symbol) },
+                        onIntervalSelected = { sec -> viewModel.setFuturesScannerInterval(sec) },
+                        onTogglePaperTrading = { enabled -> viewModel.setFuturesScannerPaperTrading(enabled) },
+                        onExplainSignalWithAi = { signal -> viewModel.explainFuturesSignalWithAi(signal) },
+                        onSimulatePaperTrade = { signal -> viewModel.simulateFuturesPaperTrade(signal) }
                     )
                 }
 

@@ -172,6 +172,33 @@ class NexusNotificationManager(private val context: Context? = null) {
         return true
     }
 
+    fun notifyFuturesScanSignal(
+        symbol: String,
+        isLong: Boolean,
+        entryZone: String,
+        sl: String,
+        tp1: String,
+        qualityScore: Int
+    ): Boolean {
+        if (isLong && !isLongSignalsEnabled()) return false
+        if (!isLong && !isShortSignalsEnabled()) return false
+
+        val key = "futures_signal_${symbol}_${if (isLong) "LONG" else "SHORT"}"
+        val lastTime = recentlyTriggered[key]
+        val cooldownMs = 45 * 60 * 1000L // 45-minute duplicate-alert cooldown per pair and direction
+        if (lastTime != null && (System.currentTimeMillis() - lastTime) < cooldownMs) {
+            return false
+        }
+
+        val emoji = if (isLong) "🟢 LONG" else "🔴 SHORT"
+        val title = "$emoji Futures Entry: $symbol ($qualityScore%)"
+        val message = "Entry: $entryZone | SL: $sl | TP1: $tp1"
+
+        recentlyTriggered[key] = System.currentTimeMillis()
+        postNotification(title, message, if (isLong) AlertType.SIGNAL_LONG else AlertType.SIGNAL_SHORT, (symbol.hashCode() and 0x7FFFFFFF) % 10000 + 5000)
+        return true
+    }
+
     private fun postNotification(title: String, message: String, type: AlertType, notifId: Int) {
         // Emit in-app event for immediate UI banner/snackbars
         _inAppEvents.tryEmit(InAppNotificationEvent(title, message, type))

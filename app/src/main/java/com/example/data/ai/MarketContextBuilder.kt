@@ -32,11 +32,12 @@ object MarketContextBuilder {
         technicalAnalysis: OverallAnalysisResult? = null,
         smcAnalysis: SmcAnalysisResult? = null,
         signal: AiTradingSignal? = null,
-        newsList: List<MarketNews> = emptyList()
+        newsList: List<MarketNews> = emptyList(),
+        futuresSignal: com.example.data.scanner.FuturesScanSignal? = null
     ): MarketContextSnapshot {
-        val symbol = asset?.symbol ?: signal?.symbol ?: "BTCUSDT"
-        val assetName = asset?.name ?: "Bitcoin"
-        val currentPrice = asset?.currentPrice ?: candles.lastOrNull()?.close ?: 0.0
+        val symbol = asset?.symbol ?: signal?.symbol ?: futuresSignal?.symbol ?: "BTCUSDT"
+        val assetName = asset?.name ?: futuresSignal?.baseAsset ?: "Bitcoin"
+        val currentPrice = asset?.currentPrice ?: futuresSignal?.currentPrice ?: candles.lastOrNull()?.close ?: 0.0
         val change24h = asset?.change24hPercent ?: 0.0
 
         val rsi = technicalAnalysis?.momentum?.rsi14
@@ -104,9 +105,23 @@ object MarketContextBuilder {
             confidenceScore = sigConfidence,
             relevantNewsSummary = relevantNews,
             macroEventSummary = macroNews,
-            dataSource = asset?.dataSourceName ?: "Public Binance & CoinGecko Feeds",
+            dataSource = asset?.dataSourceName ?: futuresSignal?.dataSource ?: "Public Binance & CoinGecko Feeds",
             lastUpdatedFormatted = lastUpdated,
-            isRealData = currentPrice > 0.0
+            isRealData = currentPrice > 0.0,
+            futuresSignalSummary = futuresSignal?.let { fs ->
+                """
+                Scanned Pair: ${fs.symbol} | Direction: ${fs.direction.name} | Status: ${fs.lifecycle.label}
+                Entry Zone: ${fs.entryZoneFormatted} (Current: ${fs.currentPriceFormatted})
+                Stop Loss: ${fs.stopLossFormatted} (-${String.format(Locale.US, "%.2f", fs.slDistancePercent)}%)
+                TP1: ${fs.tp1Formatted} (+${String.format(Locale.US, "%.2f", fs.tp1DistancePercent)}%)
+                TP2: ${fs.tp2Formatted} (+${String.format(Locale.US, "%.2f", fs.tp2DistancePercent)}%)
+                TP3: ${fs.tp3Formatted} (+${String.format(Locale.US, "%.2f", fs.tp3DistancePercent)}%)
+                Risk/Reward: 1:${String.format(Locale.US, "%.2f", fs.riskRewardRatio)} | Quality Score: ${fs.qualityScore}/100 (${fs.qualityRating})
+                Confluence Reasons: ${fs.reasonsForEntry.joinToString("; ")}
+                Invalidation Rule: ${fs.invalidationCondition}
+                Multi-Timeframe Confirmation: ${fs.timeframeConfirmations.joinToString(" | ") { "${it.timeframe.label}: ${it.trend} (${it.structure})" }}
+                """.trimIndent()
+            }
         )
     }
 }
